@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+ 
+    <!-- Include D3.js and jQuery -->
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
+    <style>
+        h1, p { margin: -5px; }
+        .tooltip {
+            position: absolute;
+            background-color: #fff;
+            border: 1px groove #ccc;
+            padding: 10px;
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>PRA3006 Final Assignment - Bubble Chart</h1>
+    <p>Treatments for the different types of cancer</p>
+
+    <!-- Division for the bubble chart -->
+    <div id="bubbleChart" style="margin: 20px;"></div>
+    
+
+    <!-- JavaScript for creating the interactive bubble chart -->
+    <script type="text/javascript">
+        
+        // Function to make SPARQL query using jQuery
+        function makeSPARQLQuery(endpointUrl, sparqlQuery, doneCallback) {
+            var settings = {
+                headers: { Accept: 'application/sparql-results+json' },
+                data: { query: sparqlQuery }
+            };
+            return $.ajax(endpointUrl, settings).then(doneCallback);
+        }
+
+        var endpointUrl = 'https://query.wikidata.org/sparql';
+        var sparqlQuery = "SELECT ?drugLabel (GROUP_CONCAT(DISTINCT ?cancerLabel; SEPARATOR=\", \") AS ?cancers) (COUNT(DISTINCT ?cancer) AS ?cancerCount)\n" +
+            "WHERE {\n" +
+            "  ?drug wdt:P2175 ?cancer.\n" +
+            "  ?drug rdfs:label ?drugLabel.\n" +
+            "  ?cancer rdfs:label ?cancerLabel.\n" +
+            "  FILTER(LANG(?drugLabel) = \"en\")\n" +
+            "  FILTER(LANG(?cancerLabel) = \"en\")\n" +
+            "  FILTER (\n" +
+            "    CONTAINS(?cancerLabel, \"breast cancer\") || \n" +
+            "    CONTAINS(?cancerLabel, \"lung cancer\") || \n" +
+            "    CONTAINS(?cancerLabel, \"leukemia\") || \n" +
+            "    CONTAINS(?cancerLabel, \"colon cancer\") || \n" +
+            "    CONTAINS(?cancerLabel, \"brain cancer\") || \n" +
+            "    CONTAINS(?cancerLabel, \"testicular cancer\") || \n" +
+            "    CONTAINS(?cancerLabel, \"prostate cancer\") ||\n" +
+            "    CONTAINS(?cancerLabel, \"esophageal cancer\") ||\n" +
+            "    CONTAINS(?cancerLabel, \"bladder cancer\") ||\n" +
+            "    CONTAINS(?cancerLabel, \"melanoma\") ||\n" +
+            "    CONTAINS(?cancerLabel, \"kidney cancer\")\n" +
+            "  )\n" +
+            "}\n" +
+            "GROUP BY ?drugLabel\n" +
+            "ORDER BY DESC(?cancerCount)\n" +
+            "";
+
+        makeSPARQLQuery(endpointUrl, sparqlQuery, function (data) {
+            console.log('SPARQL Query Result:', data);
+
+            // Set up dimensions for the bubble chart
+            var width = 600;
+            var height = 500;
+
+            // Create a force simulation to prevent overlap between bubbles
+            var simulation = d3.forceSimulation()
+                .force('x', d3.forceX(width / 2).strength(0.05))
+                .force('y', d3.forceY(height / 2).strength(0.05))
+                .force('collide', d3.forceCollide().radius(function (d) 
+                { return Math.sqrt(d.cancerCount.value) * 10 + 2;}));
+
+            // Create a bubble chart using D3.js
+            var svg = d3.select('#bubbleChart')
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            // Create a rainbow color scale
+            var colorScale = d3.scaleSequential(d3.interpolateRainbow)
+            .domain([0, d3.max(data.results.bindings, function (d) 
+            { return +d.cancerCount.value; })]);
+
+            // Create a bubble for each drug
+            var bubbles = svg.selectAll('.bubble')
+                .data(data.results.bindings)
+                .enter()
+                .append('circle')
+                .attr('class', 'bubble')
+                .attr('r', function (d) { return Math.sqrt(d.cancerCount.value) * 11; })
+                .attr('fill', function (d) { return colorScale(d.cancerCount.value); })
+                .on('mouseover', function (d) { showCancers(d); })
+                .on('mouseout', function () { hideCancers(); })
+                .call(d3.drag()
+                    .on('start', dragStarted)
+                    .on('drag', dragged)
+                    .on('end', dragEnded));
+
+            // Add labels for each drug
+            var labels = svg.selectAll('.label')
+                .data(data.results.bindings)
+                .enter()
+                .append('text')
+                .attr('class', 'label')
+                .text(function (d) { return d.cancerCount.value; }) // Display cancerCount in the bubbles
+                .attr('font-size', '14px')
+                .attr('text-anchor', 'middle')
+                .attr('dy','0.3em') 
+                .attr('fill', 'white')
+                
+            // Tooltip for displaying cancers
+            var tooltip = d3.select('body').append('div')
+                .attr('class', 'tooltip')
+                .style('opacity', 0);
+
+            // Start the force simulation
+            simulation.nodes(data.results.bindings)
+                .on('tick', function () {
+                    bubbles.attr('cx', function (d) { return d.x; })
+                        .attr('cy', function (d) { return d.y; });
+                    labels.attr('x', function (d) { return d.x; })
+                        .attr('y', function (d) { return d.y; });
+                });
+
+            // Display cancers on hover
+            function showCancers(d) {
+                tooltip.transition()
+                    .duration(200)
+                    .style('opacity', 0.9);
+                tooltip.html(`<strong>Treatment with ${d.drugLabel.value} for:</strong><br>${d.cancers.value}`)
+                    .style('left', (d3.event.pageX) + 'px')
+                    .style('top', (d3.event.pageY - 28) + 'px');
+            }
+
+            // Hide tooltip when mouse is not hovering over bubble
+            function hideCancers() {
+                tooltip.transition()
+                    .duration(500)
+                    .style('opacity', 0);
+            }
+
+            // Drag functions for force simulation
+            function dragStarted(d) {
+                if (!d3.event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(d) {
+                d.fx = d3.event.x;
+                d.fy = d3.event.y;
+            }
+
+            function dragEnded(d) {
+                if (!d3.event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        });
+    </script>
+</body>
+</html>
